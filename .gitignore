@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# ML Generated database
+chroma_db/

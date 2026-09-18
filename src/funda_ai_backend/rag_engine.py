@@ -84,8 +84,8 @@ def query_tutor(student_query: str):
 
 # --- Hackathon Testing ---
 # Run this once to populate chroma_db, then comment it out on subsequent runs
-ingest_curriculum_document("knowledgebase/Heritage-notes-form-1-4-2.pdf")
+# ingest_curriculum_document("knowledgebase/Heritage-notes-form-1-4-2.pdf")
 
-# 2. Test the retrieval:
-result = query_tutor("What is the significance of the Great Zimbabwe ruins?")
-print(result["answer"])
+# # 2. Test the retrieval:
+# result = query_tutor("What is the significance of the Great Zimbabwe ruins?")
+# print(result["answer"])
