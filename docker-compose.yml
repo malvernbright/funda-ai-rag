@@ -1,0 +1,22 @@
+services:
+  backend:
+    build: ./backend
+    container_name: funda-ai-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - ./backend/knowledgebase:/app/knowledgebase
+      - ./backend/chroma_db:/app/chroma_db
+      - ./backend/funda_ai.db:/app/funda_ai.db
+    restart: always
+
+  frontend:
+    build: ./frontend
+    container_name: funda-ai-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    restart: always

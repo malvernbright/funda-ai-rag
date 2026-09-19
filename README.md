@@ -62,6 +62,13 @@ npm install
 ```
 npm run dev
 ```
+
+## Docker Setup
+
+```
+docker compose up -d
+```
+
 Frontend UI: [http://localhost:5173](http://localhost:5173)
 
 Backend API Docs: [http://localhost:8000/docs](http://localhost:8000/docs)
@@ -74,3 +81,11 @@ Username: admin
 Password: admin2026
 
 Student Account: You can register any new student account directly from the frontend login portal.
+
+
+## Participants
+1. Malvern Gondo - malvernbright.95@gmail.com
+2. Anesu Chidenge chidengeanesu1904@gmail.com
+3. Pride Guwhe gustavoguwhe@gmail.com
+4. Delvin Shoko delvinshoko@gmail.com
+5. 
