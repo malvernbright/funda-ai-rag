@@ -1,4 +1,4 @@
-# Funda AI Backend
+# Funda AI
 
 ## Run The Backend
 ```

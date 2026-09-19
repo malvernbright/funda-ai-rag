@@ -1,5 +1,5 @@
 [project]
-name = "funda-ai-backend"
+name = "backend"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -9,16 +9,20 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.141.1",
+    "google-genai>=2.24.0",
     "langchain>=1.4.1",
     "langchain-chroma>=1.1.0",
     "langchain-community>=0.4.2",
+    "langchain-google-genai>=4.4.0",
     "langchain-ollama>=1.1.0",
+    "pydantic>=2.13.5",
     "pypdf>=6.19.0",
+    "python-dotenv>=1.2.3",
     "uvicorn>=0.53.0",
 ]
 
 [project.scripts]
-funda-ai-backend = "funda_ai_backend:main"
+backend = "backend:main"
 
 [build-system]
 requires = ["uv_build>=0.12.15,<0.13.0"]
