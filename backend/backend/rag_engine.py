@@ -29,10 +29,10 @@ def initialize_knowledgebase():
         return
 
     if os.path.exists(VECTOR_STORE_PATH) and os.listdir(VECTOR_STORE_PATH):
-        print("✅ Knowledgebase already indexed.")
+        print("✅ Knowledgebase vector store already initialized.")
         return
         
-    print(f"📚 Auto-indexing curriculum document: {DEFAULT_SYLLABUS_PATH}")
+    print(f"📚 Auto-indexing default curriculum document: {DEFAULT_SYLLABUS_PATH}")
     try:
         ingest_curriculum_document(DEFAULT_SYLLABUS_PATH)
         print("✅ Auto-indexing complete!")
@@ -45,13 +45,24 @@ def ingest_curriculum_document(file_path: str):
 
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     splits = text_splitter.split_documents(docs)
-    demo_splits = splits[:80]
+    demo_splits = splits[:80] # Stay within free tier rate limit
 
-    Chroma.from_documents(
-        documents=demo_splits, 
-        embedding=embeddings, 
-        persist_directory=VECTOR_STORE_PATH
-    )
+    # Add metadata for version tracking
+    for doc in demo_splits:
+        doc.metadata["source_file"] = os.path.basename(file_path)
+
+    if os.path.exists(VECTOR_STORE_PATH) and os.listdir(VECTOR_STORE_PATH):
+        # Append new version documents to existing vector store
+        vectorstore = Chroma(persist_directory=VECTOR_STORE_PATH, embedding_function=embeddings)
+        vectorstore.add_documents(demo_splits)
+    else:
+        # Create new vector store
+        Chroma.from_documents(
+            documents=demo_splits, 
+            embedding=embeddings, 
+            persist_directory=VECTOR_STORE_PATH
+        )
+        
     return {"status": "success", "chunks_indexed": len(demo_splits)}
 
 def format_docs(docs):

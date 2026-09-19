@@ -20,6 +20,7 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, default="student")
     sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")
+    documents = relationship("DocumentVersion", back_populates="uploader")
 
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
@@ -39,6 +40,17 @@ class ChatRecord(Base):
     student_level = Column(String, default="Form 1")
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
     session = relationship("ChatSession", back_populates="chats")
+
+class DocumentVersion(Base):
+    __tablename__ = "document_versions"
+    id = Column(Integer, primary_key=True, index=True)
+    original_filename = Column(String, nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    stored_filename = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)
+    uploaded_by = Column(Integer, ForeignKey("users.id"))
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    uploader = relationship("User", back_populates="documents")
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()

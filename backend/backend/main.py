@@ -6,7 +6,7 @@ from typing import List, Optional
 from contextlib import asynccontextmanager
 from sqlalchemy.orm import Session
 from backend.rag_engine import query_tutor, initialize_knowledgebase, ingest_curriculum_document, BASE_DIR
-from backend.database import SessionLocal, init_db, User, ChatSession, ChatRecord, hash_password
+from backend.database import SessionLocal, init_db, User, ChatSession, ChatRecord, DocumentVersion, hash_password
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -16,8 +16,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Funda AI Tutoring API",
-    description="Interactive RAG Tutor with Sessions & SQLite Auth",
-    version="2.1.0",
+    description="Interactive RAG Tutor with Document Versioning",
+    version="2.2.0",
     lifespan=lifespan
 )
 
@@ -79,7 +79,6 @@ def login_user(payload: UserAuthRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Invalid username or password.")
     return {"status": "success", "user_id": user.id, "username": user.username, "role": user.role}
 
-# --- Session Management ---
 @app.post("/api/v1/sessions")
 def create_session(payload: CreateSessionRequest, db: Session = Depends(get_db)):
     new_session = ChatSession(user_id=payload.user_id, title=payload.title)
@@ -102,7 +101,6 @@ def get_session_messages(session_id: int, db: Session = Depends(get_db)):
         history.append({"role": "assistant", "content": r.answer, "level": r.student_level})
     return {"status": "success", "messages": history}
 
-# --- Query & Persistence ---
 @app.post("/api/v1/query", response_model=QueryResponse)
 def ask_heritage_tutor(payload: StudentQueryRequest, db: Session = Depends(get_db)):
     if not payload.question.strip():
@@ -131,17 +129,49 @@ async def upload_and_index_syllabus(file: UploadFile = File(...), user_id: int =
     if not user or user.role != "admin":
         raise HTTPException(status_code=403, detail="Unauthorized.")
     
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+
     knowledgebase_dir = os.path.join(BASE_DIR, "knowledgebase")
     os.makedirs(knowledgebase_dir, exist_ok=True)
-    file_path = os.path.join(knowledgebase_dir, file.filename)
+
+    # Calculate next version number for this filename
+    latest_version_record = db.query(DocumentVersion).filter(
+        DocumentVersion.original_filename == file.filename
+    ).order_by(DocumentVersion.version.desc()).first()
+
+    next_version = (latest_version_record.version + 1) if latest_version_record else 1
+
+    # Save with version tag in filename e.g. filename_v2.pdf
+    base_name, ext = os.path.splitext(file.filename)
+    stored_filename = f"{base_name}_v{next_version}{ext}"
+    file_path = os.path.join(knowledgebase_dir, stored_filename)
     
     contents = await file.read()
     with open(file_path, "wb") as f:
         f.write(contents)
         
+    # Record version in SQLite database
+    doc_version_record = DocumentVersion(
+        original_filename=file.filename,
+        version=next_version,
+        stored_filename=stored_filename,
+        file_path=file_path,
+        uploaded_by=user_id
+    )
+    db.add(doc_version_record)
+    db.commit()
+
+    # Index new document version into ChromaDB vector store
     result = ingest_curriculum_document(file_path)
-    return {"status": "success", "message": f"Indexed {file.filename}!", "chunks_indexed": result["chunks_indexed"]}
+    
+    return {
+        "status": "success",
+        "message": f"Successfully uploaded {file.filename} as Version {next_version} and indexed {result['chunks_indexed']} chunks!",
+        "version": next_version,
+        "stored_filename": stored_filename
+    }
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy", "service": "Interactive RAG Tutor Active"}
+    return {"status": "healthy", "service": "Interactive RAG Tutor with Document Versioning Active"}
