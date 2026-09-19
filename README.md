@@ -85,7 +85,7 @@ Student Account: You can register any new student account directly from the fron
 
 ## Participants
 1. Malvern Gondo - malvernbright.95@gmail.com
-2. Anesu Chidenge chidengeanesu1904@gmail.com
-3. Pride Guwhe gustavoguwhe@gmail.com
-4. Delvin Shoko delvinshoko@gmail.com
-5. Takudzwa Mushayavanhu tabmushayavanhu@gmail.com
+2. Anesu Chidenge - chidengeanesu1904@gmail.com
+3. Pride Guwhe - gustavoguwhe@gmail.com
+4. Delvin Shoko - delvinshoko@gmail.com
+5. Takudzwa Mushayavanhu - tabmushayavanhu@gmail.com
