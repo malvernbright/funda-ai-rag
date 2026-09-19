@@ -7,7 +7,7 @@ if [ ! -d ".venv" ]; then
     echo "Creating virtual environment and installing backend dependencies with uv..."
     uv venv
     source .venv/bin/activate
-    uv pip install fastapi uvicorn python-dotenv google-genai langchain-google-genai langchain-chroma langchain-community pypdf pydantic
+    uv pip install fastapi uvicorn python-dotenv google-genai langchain-google-genai langchain-chroma langchain-community pypdf pydantic python-multipart
 else
     source .venv/bin/activate
 fi
