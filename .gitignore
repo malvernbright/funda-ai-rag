@@ -6,3 +6,12 @@
 *.pyc
 *node_modules/
 *.DS_Store
+
+# Model
+*.gguf
+
+chroma_db/
+*.bin
+*.pickle
+
+*.sqlite3

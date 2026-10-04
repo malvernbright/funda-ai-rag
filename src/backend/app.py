@@ -2,10 +2,16 @@ import streamlit as st
 import os
 from datetime import datetime
 from backend.database import SessionLocal, init_db, User, ChatSession, ChatRecord, DocumentVersion, hash_password
-from backend.rag_engine import query_tutor, ingest_curriculum_document, BASE_DIR
+from backend.rag_engine import (
+    query_tutor, ingest_curriculum_document, index_knowledgebase,
+    KNOWLEDGEBASE_DIR, LEVELS, LANGUAGES, SUBJECT_LABELS,
+    list_subjects, list_all_subject_dirs, subject_label,
+    start_background_indexing, indexing_status
+)
 
 # Initialize SQLite database and ChromaDB knowledgebase on startup
 init_db()
+start_background_indexing()  # indexes new/unfinished PDFs in the background, once per server process
 
 st.set_page_config(
     page_title="Funda AI Tutor",
@@ -108,14 +114,32 @@ if user["role"] == "admin":
     st.title("📚 Curriculum Document Management & Versioning")
     st.write("Upload updated official Ministry syllabi or study notes. The system automatically version-tracks and indexes chunks into ChromaDB.")
 
+    OTHER = "➕ New subject..."
+    c1, c2 = st.columns(2)
+    with c1:
+        admin_level = st.selectbox("Education Level", list(LEVELS.keys()), key="admin_level")
+    with c2:
+        admin_subject = st.selectbox(
+            "Subject",
+            list_all_subject_dirs() + [OTHER],
+            format_func=lambda d: d if d == OTHER else subject_label(d),
+            key="admin_subject"
+        )
+    if admin_subject == OTHER:
+        custom = st.text_input("New subject folder name (e.g. history, accounts)")
+        admin_subject = "".join(ch for ch in custom.strip().lower().replace(" ", "_") if ch.isalnum() or ch == "_")
+
     uploaded_file = st.file_uploader("Select PDF Curriculum Document", type=["pdf"])
-    if uploaded_file and st.button("Upload & Index Document Version", type="primary"):
-        knowledgebase_dir = os.path.join(BASE_DIR, "knowledgebase")
+    if uploaded_file and not admin_subject:
+        st.warning("Enter a subject folder name before uploading.")
+    if uploaded_file and admin_subject and st.button("Upload & Index Document Version", type="primary"):
+        knowledgebase_dir = os.path.join(KNOWLEDGEBASE_DIR, LEVELS[admin_level], admin_subject)
         os.makedirs(knowledgebase_dir, exist_ok=True)
 
         # Determine next version number for this file
         latest_version = db.query(DocumentVersion).filter(
-            DocumentVersion.original_filename == uploaded_file.name
+            DocumentVersion.original_filename == uploaded_file.name,
+            DocumentVersion.file_path.like(f"{knowledgebase_dir}%")
         ).order_by(DocumentVersion.version.desc()).first()
         next_version = (latest_version.version + 1) if latest_version else 1
 
@@ -145,6 +169,28 @@ if user["role"] == "admin":
                 )
             except Exception as e:
                 st.error(f"Document was saved but indexing failed: {e}")
+
+    st.divider()
+    st.subheader("Bulk indexing")
+    st.caption("Indexes every PDF placed manually under knowledgebase/<level>/<subject>/ that isn't indexed yet.")
+    status = indexing_status()
+    if status["running"]:
+        st.info(f"📚 Background indexing in progress: {status['done']}/{status['total']} files"
+                + (f" (now: {status['current']})" if status["current"] else "") + ". Refresh the page to update.")
+    for item in status["failed"]:
+        st.error(item)
+    if st.button("🔄 Index all new documents"):
+        with st.spinner("Indexing... large books can take several minutes on the free API tier."):
+            summary = index_knowledgebase()
+        if summary.get("busy"):
+            st.info("Indexing is already running in the background.")
+        else:
+            st.success(
+                f"Indexed {len(summary['indexed'])} new file(s); {len(summary['skipped'])} already indexed.")
+            for item in summary["indexed"]:
+                st.write(f"✅ {item}")
+            for item in summary["failed"]:
+                st.error(item)
 
     db.close()
     st.stop()
@@ -198,6 +244,11 @@ with st.sidebar:
             db.close()
             st.rerun()
 
+    index_status = indexing_status()
+    if index_status["running"]:
+        st.info(f"📚 Library is still being indexed ({index_status['done']}/{index_status['total']} files). "
+                "Some subjects may not have answers yet.")
+
     st.markdown("---")
     if st.button("🚪 Logout", use_container_width=True):
         st.session_state.user = None
@@ -213,14 +264,28 @@ current_session = db.query(ChatSession).filter(
     ChatSession.user_id == user["id"]
 ).first()
 
-col_head1, col_head2 = st.columns([3, 1])
+col_head1, col_head2, col_head3, col_head4 = st.columns([3, 1, 1.5, 1.3])
 with col_head1:
     session_title = current_session.title if current_session else "Interactive Session"
     st.markdown(f"#### 🤖 {session_title} — Socratic Active Learning")
 with col_head2:
     student_level = st.selectbox(
         "Form Level",
-        ["Form 1", "Form 2", "Form 3", "Form 4"],
+        list(LEVELS.keys()),
+        label_visibility="collapsed"
+    )
+with col_head3:
+    subject_labels = {"": "All subjects", **dict(list_subjects(student_level))}
+    selected_subject = st.selectbox(
+        "Subject",
+        list(subject_labels.keys()),
+        format_func=lambda k: subject_labels[k],
+        label_visibility="collapsed"
+    )
+with col_head4:
+    selected_language = st.selectbox(
+        "Language",
+        list(LANGUAGES.keys()),
         label_visibility="collapsed"
     )
 
@@ -253,8 +318,13 @@ if current_session:
         with st.chat_message("assistant"):
             with st.spinner("Tutor is formulating guidance & practice questions..."):
                 try:
-                    response = query_tutor(prompt, student_level, chat_history)
+                    response = query_tutor(
+                        prompt, student_level, chat_history,
+                        subject=selected_subject or None,
+                        language=selected_language
+                    )
                     st.markdown(response["answer"])
+                    st.caption(f"Answered by {response['model_used']} · {selected_language}")
 
                     # Persist to database
                     chat_entry = ChatRecord(

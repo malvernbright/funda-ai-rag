@@ -14,58 +14,80 @@ The repository includes shell scripts to automatically check, build, and run bot
 * A valid **Google Gemini API Key**.
 
 ### 2. Configure Environment Variables
+
 Create a `.env` file inside the `backend/` directory:
+
 ```
 GOOGLE_API_KEY=your_gemini_api_key_here
 ```
+
 ## Run the System
 
 ## Backend
 
+### Install Programs on your PC
+
+```bash
+sudo pacman -S tesseract tesseract-data-eng     # Arch
+# sudo apt install tesseract-ocr
 ```
+
+```bash
 cd backend 
 create virtualenvironment
 ```
+
 * Run
-```
+
+```bash
 python3 -m venv .venv
 ```
 
-* Run 
-```
+* Run
+
+```bash
 source .venv/bin/activate
 ```
 
 * Run
-```
+
+```bash
 pip install --upgrade pip
 ```
 
 * Run
-```
+
+```bash
 pip install -r requirements.txt
 ```
 
 * Run
-```
+
+```bash
 uvicorn backend.main:app --reload --port 8000
 ```
 
 ## Frontend
+
+```bash
 cd frontend
-* RUN 
 ```
+
+* RUN
+
+```bash
 npm install
 ```
 
 * RUN
-```
+
+```bash
 npm run dev
 ```
 
 ## Docker Setup
 
-```
+```bash
 docker compose up -d
 ```
 
@@ -84,8 +106,9 @@ Student Account: You can register any new student account directly from the fron
 
 
 ## Participants
-1. Malvern Gondo - malvernbright.95@gmail.com
-2. Anesu Chidenge - chidengeanesu1904@gmail.com
-3. Pride Guwhe - gustavoguwhe@gmail.com
-4. Delvin Shoko - delvinshoko@gmail.com
-5. Takudzwa Mushayavanhu - tabmushayavanhu@gmail.com
+
+1. Malvern Gondo - [malvernbright.95@gmail.com](malvernbright.95@gmail.com)[]
+2. Anesu Chidenge - [chidengeanesu1904@gmail.com](chidengeanesu1904@gmail.com)
+3. Pride Guwhe - [gustavoguwhe@gmail.com](gustavoguwhe@gmail.com)
+4. Delvin Shoko - [delvinshoko@gmail.com](delvinshoko@gmail.com)
+5. Takudzwa Mushayavanhu - [tabmushayavanhu@gmail.com](tabmushayavanhu@gmail.com)
