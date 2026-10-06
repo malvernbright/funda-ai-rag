@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
+from langchain_ollama import OllamaEmbeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.output_parsers import StrOutputParser
 
@@ -76,7 +77,11 @@ LANGUAGES = {
     "Nigerian Pidgin": "pcm",
 }
 
-embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+# embeddings = GoogleGenerativeAIEmbeddings(model=EMBEDDING_MODEL)
+embeddings = OllamaEmbeddings(
+    model="nomic-embed-text",
+    base_url="http://localhost:11434"  # Default local URL
+)
 llm = ChatGoogleGenerativeAI(model=LLM_MODEL, temperature=0.3)
 
 
@@ -170,6 +175,7 @@ def _load_pdf(file_path: str):
 
     try:
         import fitz  # PyMuPDF
+        # import pymupdf
         import pytesseract
         from PIL import Image
         pytesseract.get_tesseract_version()  # fails fast if the tesseract program is missing
@@ -180,6 +186,7 @@ def _load_pdf(file_path: str):
 
     print(f"🔍 OCR on {len(weak_pages)} of {len(docs)} pages in {os.path.basename(file_path)}...")
     pdf = fitz.open(file_path)
+    # pdf = pymupdf.open(file_path)
     try:
         for n, i in enumerate(weak_pages, start=1):
             try:
