@@ -11,6 +11,8 @@ from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_core.output_parsers import StrOutputParser
+from backend.model_router import GEMINI, resolve_model, describe_images, invoke_model
+from backend.figure_indexer import FIGURE_INDEXING, build_figure_docs, figures_done, mark_figures_done
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="langchain_community")
 
@@ -214,10 +216,18 @@ def ingest_curriculum_document(file_path: str):
     if not splits:
         raise ValueError("No readable text found in this PDF (scanned pages need OCR to be installed and enabled).")
 
-    for doc in splits:
+    figure_docs = []
+    if FIGURE_INDEXING:
+        try:
+            figure_docs = build_figure_docs(file_path, meta, docs)
+        except Exception as e:
+            print(f"⚠️ Figure indexing skipped for {os.path.basename(file_path)}: {e}")
+    all_docs = splits + figure_docs
+
+    for doc in all_docs:
         doc.metadata.update(meta)
         doc.metadata["source_file"] = os.path.basename(file_path)
-        doc.metadata["total_chunks"] = len(splits)
+        doc.metadata["total_chunks"] = len(all_docs)
 
     vectorstore = _get_vectorstore()
 
@@ -238,12 +248,33 @@ def ingest_curriculum_document(file_path: str):
     except Exception as e:
         print(f"⚠️ Could not remove older versions: {e}")
 
-    for i in range(0, len(splits), EMBED_BATCH_SIZE):
-        _add_with_retry(vectorstore, splits[i:i + EMBED_BATCH_SIZE])
-        if i + EMBED_BATCH_SIZE < len(splits):
+    for i in range(0, len(all_docs), EMBED_BATCH_SIZE):
+        _add_with_retry(vectorstore, all_docs[i:i + EMBED_BATCH_SIZE])
+        if i + EMBED_BATCH_SIZE < len(all_docs):
             time.sleep(EMBED_BATCH_PAUSE)
 
-    return {"status": "success", "chunks_indexed": len(splits), **meta}
+    if FIGURE_INDEXING:
+        mark_figures_done(meta)
+
+    return {"status": "success", "chunks_indexed": len(splits), "figures_indexed": len(figure_docs), **meta}
+
+
+def _add_figures_to_indexed(path: str, meta: dict, expected: int, vectorstore):
+    """Backfill figures for a book whose text was indexed before figure indexing existed."""
+    page_docs = PyPDFLoader(path).load()
+    figs = build_figure_docs(path, meta, page_docs)
+    try:
+        vectorstore.delete(where={"$and": [{"source_path": meta["source_path"]}, {"type": "figure"}]})
+    except Exception:
+        pass
+    for d in figs:
+        d.metadata.update(meta)
+        d.metadata["source_file"] = os.path.basename(path)
+        d.metadata["total_chunks"] = expected   # keep the "fully indexed" check based on the text chunks
+    for i in range(0, len(figs), EMBED_BATCH_SIZE):
+        _add_with_retry(vectorstore, figs[i:i + EMBED_BATCH_SIZE])
+    mark_figures_done(meta)
+    return len(figs)
 
 
 _index_run_lock = threading.Lock()
@@ -277,13 +308,15 @@ def index_knowledgebase() -> dict:
                         latest[key] = (meta["version"], path, meta)
 
         vectorstore = _get_vectorstore()
-        indexed, skipped, failed, pending = [], [], [], []
+        indexed, skipped, failed, pending, figure_backfill = [], [], [], [], []
         for _, (_, path, meta) in sorted(latest.items()):
             existing = vectorstore.get(where={"source_path": meta["source_path"]}, include=["metadatas"])
             ids = existing["ids"]
             expected = (existing["metadatas"][0] or {}).get("total_chunks", 0) if ids else 0
             if ids and len(ids) >= expected:
                 skipped.append(meta["source_path"])
+                if FIGURE_INDEXING and not figures_done(meta):
+                    figure_backfill.append((path, meta, expected))
             else:
                 pending.append((path, meta))
 
@@ -297,6 +330,15 @@ def index_knowledgebase() -> dict:
                 failed.append(f"{meta['source_path']}: {e}")
             _index_state["done"] += 1
             _index_state["failed"] = list(failed)
+
+        for path, meta, expected in figure_backfill:
+            _index_state["current"] = f"{meta['source_path']} (figures)"
+            try:
+                n = _add_figures_to_indexed(path, meta, expected, vectorstore)
+                indexed.append(f"{meta['source_path']} ({n} figures)")
+            except Exception as e:
+                failed.append(f"{meta['source_path']} (figures): {e}")
+                _index_state["failed"] = list(failed)
 
         return {"indexed": indexed, "skipped": skipped, "failed": failed}
     finally:
@@ -333,7 +375,10 @@ def initialize_knowledgebase():
 # Tutoring
 # ------------------------------------------------------------------
 def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
+    return "\n\n".join(
+        f"[FIGURE] {doc.page_content}" if doc.metadata.get("type") == "figure" else doc.page_content
+        for doc in docs
+    )
 
 
 def _build_filter(level_dir, subject):
@@ -347,16 +392,23 @@ def _build_filter(level_dir, subject):
     return clauses[0] if len(clauses) == 1 else {"$and": clauses}
 
 
-def _build_prompt(question, level, subject, language, history, context):
+def _build_prompt(question, level, subject, language, history, context, image_text=""):
     scope = level + (f", {subject_label(subject)}" if subject else "")
+    image_block = (
+        "The student attached an image. Here is what it shows (transcribed by a vision model):\n"
+        f"{image_text}\n\n"
+    ) if image_text else ""
     return (
         "You are an expert, encouraging AI tutor for the Zimbabwe Heritage-Based Curriculum.\n"
         f"Your goal is to TEACH the student ({scope}), not just give static answers. "
         "Explain concepts clearly, step by step, and finish with one short check-for-understanding question.\n"
         "Use ONLY the context below. If the context does not contain the answer, say clearly that the information is outside the syllabus.\n"
+        "Items marked [FIGURE] are pictures from the textbook that will be shown to the student; "
+        "refer to a relevant one by its page number (e.g. 'see the diagram on page 12').\n"
         f"Write your entire reply in {language}.\n\n"
         f"Previous Conversation History:\n{history}\n\n"
         f"Context:\n{context}\n\n"
+        f"{image_block}"
         f"Student Message: {question}"
     )
 
@@ -399,17 +451,42 @@ def _call_morena_server(prompt: str) -> str:
     return response.json()["content"].strip()
 
 
+def _generate(prompt, language, info, images):
+    """Pick the model. info=None means Auto: Morena for non-English, otherwise Gemini."""
+    if info is None:
+        if language != "English":
+            try:
+                return _call_morena(prompt), "morena-1.5b"
+            except Exception as e:
+                print(f"⚠️ Morena unavailable ({e}); falling back to Gemini.")
+        return invoke_model(GEMINI, prompt, images), "gemini"
+    if info.provider == "morena":
+        return _call_morena(prompt), "morena-1.5b"
+    # Vision models also get the raw image; text-only models rely on the description inside the prompt.
+    return invoke_model(info, prompt, images if info.vision else None), info.name
+
+
 def query_tutor(student_query: str, student_level: str = "Form 1", chat_history: list = None,
-                subject: str = None, language: str = "English"):
-    # Keep only the last few turns so small-context models are not overloaded
+                subject: str = None, language: str = "English",
+                model: str = "auto", images: list = None):
+    """images: list of (bytes, mime) tuples, already prepared with model_router.prepare_image."""
+    images = images or []
     history_text = "\n".join(
         f"{msg['role'].capitalize()}: {msg['content']}" for msg in (chat_history or [])[-6:]
     )
 
     try:
+        info = resolve_model(model)  # None = Auto
+
+        # Images -> text, so retrieval works and text-only models can still "see" the picture
+        image_text = describe_images(images, preferred=info) if images else ""
+        retrieval_query = f"{student_query}\n{image_text}".strip()[:1500]
+
         vectorstore = _get_vectorstore()
         search_filter = _build_filter(LEVELS.get(student_level), subject)
-        docs = vectorstore.similarity_search(student_query, k=4, filter=search_filter)
+        retrieved = vectorstore.similarity_search(retrieval_query, k=8, filter=search_filter)
+        figure_hits = [d for d in retrieved if d.metadata.get("type") == "figure"][:2]
+        docs = [d for d in retrieved if d.metadata.get("type") != "figure"][:4] + figure_hits
 
         if not docs:
             scope = student_level + (f" {subject_label(subject)}" if subject else "")
@@ -430,27 +507,28 @@ def query_tutor(student_query: str, student_level: str = "Form 1", chat_history:
                 "safeguard_notice": "No curriculum material was retrieved for this question."
             }
 
-        prompt = _build_prompt(student_query, student_level, subject, language, history_text, format_docs(docs))
-
-        answer, model_used = None, "gemini"
-        if language != "English":
-            try:
-                answer = _call_morena(prompt)
-                model_used = "morena-1.5b"
-            except Exception as e:
-                print(f"⚠️ Morena unavailable ({e}); falling back to Gemini.")
-        if not answer:
-            answer = (llm | StrOutputParser()).invoke(prompt)
-            model_used = "gemini"
+        prompt = _build_prompt(student_query, student_level, subject, language,
+                               history_text, format_docs(docs), image_text)
+        answer, model_used = _generate(prompt, language, info, images)
 
         notice = ("AI-generated response based on indexed curriculum documents. "
                   "Verify critical historical facts against official textbooks.")
         if model_used == "morena-1.5b":
             notice += " This reply was written by a small 1.5B-parameter model, so check it carefully."
+        if images:
+            notice += " The attached image was read by an AI model and may contain transcription errors."
 
         return {
             "answer": answer,
             "context_used": [doc.page_content for doc in docs],
+            "figures": [
+                {"path": os.path.join(BASE_DIR, d.metadata["figure_path"]),
+                 "page": d.metadata.get("page_number"),
+                 "source": d.metadata.get("original_name", ""),
+                 "caption": d.page_content}
+                for d in figure_hits
+                if d.metadata.get("figure_path") and os.path.exists(os.path.join(BASE_DIR, d.metadata["figure_path"]))
+            ],
             "student_level": student_level,
             "subject": subject,
             "language": language,
@@ -460,4 +538,3 @@ def query_tutor(student_query: str, student_level: str = "Form 1", chat_history:
     except Exception as e:
         print(f"❌ RAG Execution Error: {str(e)}")
         raise e
-        

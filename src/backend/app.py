@@ -1,7 +1,9 @@
 import streamlit as st
 import os
+import json
 from datetime import datetime
 from backend.database import SessionLocal, init_db, User, ChatSession, ChatRecord, DocumentVersion, hash_password
+from backend.model_router import list_models, prepare_image, save_image
 from backend.rag_engine import (
     query_tutor, ingest_curriculum_document, index_knowledgebase,
     KNOWLEDGEBASE_DIR, LEVELS, LANGUAGES, SUBJECT_LABELS,
@@ -244,6 +246,24 @@ with st.sidebar:
             db.close()
             st.rerun()
 
+    st.markdown("---")
+    st.markdown("##### 🧠 Tutor Model")
+    available_models = list_models()
+    model_labels = {m.key: m.label for m in available_models}
+    if st.session_state.get("model_key") not in model_labels:
+        st.session_state["model_key"] = "auto"
+    selected_model_key = st.selectbox(
+        "Model", list(model_labels), format_func=lambda k: model_labels[k],
+        key="model_key", label_visibility="collapsed"
+    )
+    chosen_model = next(m for m in available_models if m.key == selected_model_key)
+    if chosen_model.vision:
+        st.caption("👁 Can read photos you attach (homework, diagrams, maps).")
+    else:
+        st.caption("📝 Text-only model. Photos are read by a vision model first, then passed on as text.")
+    if len(available_models) <= 3:
+        st.caption("No local Ollama models found. Is `ollama serve` running?")
+
     index_status = indexing_status()
     if index_status["running"]:
         st.info(f"📚 Library is still being indexed ({index_status['done']}/{index_status['total']} files). "
@@ -301,13 +321,28 @@ if current_session:
     for r in records:
         with st.chat_message("user"):
             st.write(r.question)
+            for img_path in json.loads(r.image_paths or "[]"):
+                if os.path.exists(img_path):
+                    st.image(img_path, width=260)
         with st.chat_message("assistant"):
             st.markdown(r.answer)
 
     # Handle incoming user query
-    if prompt := st.chat_input("Ask your tutor a question or request a quiz..."):
+    if submission := st.chat_input(
+        "Ask your tutor a question, attach a photo, or request a quiz...",
+        accept_file="multiple",
+        file_type=["png", "jpg", "jpeg", "webp"],
+    ):
+        prompt = (submission.text or "").strip()
+        uploaded_images = list(submission.files or [])[:3]
+        if uploaded_images and not prompt:
+            prompt = "Please help me with the attached image."
+        images = [prepare_image(f.getvalue(), f.type or "image/jpeg") for f in uploaded_images]
+
         with st.chat_message("user"):
             st.write(prompt)
+            for raw, _mime in images:
+                st.image(raw, width=260)
 
         # Previous messages in this session for the context window
         chat_history = []
@@ -321,17 +356,26 @@ if current_session:
                     response = query_tutor(
                         prompt, student_level, chat_history,
                         subject=selected_subject or None,
-                        language=selected_language
+                        language=selected_language,
+                        model=selected_model_key,
+                        images=images
                     )
                     st.markdown(response["answer"])
                     st.caption(f"Answered by {response['model_used']} · {selected_language}")
+                    if response.get("figures"):
+                        with st.expander("📖 Figures from your textbook", expanded=True):
+                            for fig in response["figures"]:
+                                st.image(fig["path"], width=380,
+                                         caption=f"{fig['source']} · page {fig['page']}")
 
                     # Persist to database
                     chat_entry = ChatRecord(
                         session_id=current_session.id,
                         question=prompt,
                         answer=response["answer"],
-                        student_level=student_level
+                        student_level=student_level,
+                        image_paths=json.dumps([save_image(raw, mime) for raw, mime in images]) if images else None,
+                        model_used=response["model_used"]
                     )
                     db.add(chat_entry)
                     db.commit()

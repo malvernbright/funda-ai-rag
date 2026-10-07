@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 import datetime
@@ -38,6 +38,8 @@ class ChatRecord(Base):
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
     student_level = Column(String, default="Form 1")
+    image_paths = Column(Text, nullable=True)   # JSON list of saved image files attached to the question
+    model_used = Column(String, nullable=True)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
     session = relationship("ChatSession", back_populates="chats")
 
@@ -55,8 +57,19 @@ class DocumentVersion(Base):
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
+def _add_missing_columns():
+    """create_all() never alters existing tables, so add the new chat columns to an existing funda_ai.db."""
+    existing = {c["name"] for c in inspect(engine).get_columns("chats")}
+    with engine.begin() as conn:
+        if "image_paths" not in existing:
+            conn.execute(text("ALTER TABLE chats ADD COLUMN image_paths TEXT"))
+        if "model_used" not in existing:
+            conn.execute(text("ALTER TABLE chats ADD COLUMN model_used VARCHAR"))
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    _add_missing_columns()
     db = SessionLocal()
     admin_user = db.query(User).filter(User.username == "admin").first()
     if not admin_user:

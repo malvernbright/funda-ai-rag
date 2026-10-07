@@ -1,4 +1,6 @@
 import os
+import json
+import base64
 from fastapi import FastAPI, HTTPException, status, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -6,6 +8,7 @@ from typing import List, Optional
 from contextlib import asynccontextmanager
 from sqlalchemy.orm import Session
 from backend.rag_engine import query_tutor, initialize_knowledgebase, ingest_curriculum_document, BASE_DIR
+from backend.model_router import list_models, prepare_image, save_image
 from backend.database import SessionLocal, init_db, User, ChatSession, ChatRecord, DocumentVersion, hash_password
 
 @asynccontextmanager
@@ -54,12 +57,15 @@ class StudentQueryRequest(BaseModel):
     question: str
     student_level: Optional[str] = "Form 1"
     chat_history: List[ChatMessage] = []
+    model: Optional[str] = "auto"                 # a key from GET /api/v1/models
+    images_base64: List[str] = []                 # up to 3 base64-encoded images
 
 class QueryResponse(BaseModel):
     answer: str
     context_used: List[str]
     student_level: str
     safeguard_notice: str
+    model_used: Optional[str] = None
 
 @app.post("/api/v1/auth/register")
 def register_user(payload: UserAuthRequest, db: Session = Depends(get_db)):
@@ -101,6 +107,10 @@ def get_session_messages(session_id: int, db: Session = Depends(get_db)):
         history.append({"role": "assistant", "content": r.answer, "level": r.student_level})
     return {"status": "success", "messages": history}
 
+@app.get("/api/v1/models")
+def get_models():
+    return [{"key": m.key, "label": m.label, "provider": m.provider, "vision": m.vision} for m in list_models()]
+
 @app.post("/api/v1/query", response_model=QueryResponse)
 def ask_heritage_tutor(payload: StudentQueryRequest, db: Session = Depends(get_db)):
     if not payload.question.strip():
@@ -108,13 +118,17 @@ def ask_heritage_tutor(payload: StudentQueryRequest, db: Session = Depends(get_d
         
     try:
         history_list = [{"role": msg.role, "content": msg.content} for msg in payload.chat_history]
-        response = query_tutor(payload.question, payload.student_level, history_list)
+        images = [prepare_image(base64.b64decode(b.split(",")[-1])) for b in payload.images_base64[:3]]
+        response = query_tutor(payload.question, payload.student_level, history_list,
+                               model=payload.model, images=images)
         
         chat_entry = ChatRecord(
             session_id=payload.session_id,
             question=payload.question,
             answer=response["answer"],
-            student_level=payload.student_level
+            student_level=payload.student_level,
+            image_paths=json.dumps([save_image(raw, mime) for raw, mime in images]) if images else None,
+            model_used=response.get("model_used")
         )
         db.add(chat_entry)
         db.commit()
